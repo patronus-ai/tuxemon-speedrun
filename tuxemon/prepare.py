@@ -58,6 +58,26 @@ def pygame_init() -> DisplayContext:
     pg.init()
     pg.display.set_caption(CONFIG.window_caption)
 
+    # TUXEMON_NATIVE_RENDER=1 -- render at NATIVE_RESOLUTION so the tile art matches the grid.
+    #
+    # make_default_scaling() computes scale = int(resolution_x / native_x), so the stock 1280x720
+    # gives scale=5 and DisplayContext.tile_size = scale_point(16) = 80. The map then positions
+    # tiles on an 80px grid while blitting the tileset at its native 16px, and a captured frame is
+    # a lattice of 16px tiles with 64px of black between them -- measured 3.4% non-black, pitch
+    # 80px, art 16px, ratio exactly 5. Invisible in normal play (drawing is off in the probe) and
+    # only ever surfaced when capturing video.
+    #
+    # Forcing 256x144 makes scale=1, so pitch == art == 16 and the map renders solid. Upscale the
+    # finished video (ffmpeg -vf scale=1280:720:flags=neighbor) rather than rendering large.
+    #
+    # VERIFY THE DIGEST WHENEVER THIS IS USED FOR A REPLAY. Surface size is observable to game
+    # code, so a resolution change could in principle alter the run. Compare against the same
+    # route at the default size with TUXEMON_DETERMINISTIC=1 set -- without that flag the digest
+    # varies run to run and any comparison is meaningless (it read as a false positive once).
+    if os.environ.get("TUXEMON_NATIVE_RENDER") == "1":
+        d = CONFIG.config_model.display
+        d.resolution_x, d.resolution_y = NATIVE_RESOLUTION
+
     scaling = make_default_scaling(CONFIG, NATIVE_RESOLUTION)
 
     # Fullscreen flags

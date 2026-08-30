@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import pygame
 
+from tuxemon import determinism
 from tuxemon.base_client import BaseClient, ClientState
 from tuxemon.config import TuxemonConfig
 from tuxemon.map.tuxemon import NullMap
@@ -60,6 +62,10 @@ class LocalPygameClient(BaseClient):
         self.frame_number = 0
         self.save_to_disk = False
 
+        # number of fixed simulation steps executed so far.  In deterministic
+        # mode this is the only notion of time the simulation has.
+        self.step_count = 0
+
         # Initialize drawers
         self.state_drawer = StateDrawer(
             self.screen, self.state_manager, config
@@ -100,10 +106,63 @@ class LocalPygameClient(BaseClient):
             self.set_renderer(map_renderer)
             logger.debug("Renderer reset to MapRenderer.")
 
+    def tick(self, dt: float | None = None) -> None:
+        """
+        Advance the simulation by exactly one fixed step.
+
+        This is the entry point an external driver (replay harness, benchmark)
+        should call: the *caller* decides how many steps happen, so the step
+        count is a property of the input tape and not of machine load.
+        """
+        step = 1.0 / self.config.fps if dt is None else dt
+        self.update(step)
+        determinism.advance(step)
+        self.step_count += 1
+
+    def _deterministic_main(self) -> None:
+        """
+        Fixed-step main loop used when ``TUXEMON_DETERMINISTIC`` is set.
+
+        Exactly one simulation step runs per loop iteration and the virtual
+        clock is advanced by exactly one frame, so the wall clock never
+        influences how many steps a run executes.
+
+        ``TUXEMON_MAX_STEPS`` (optional) stops the run after N steps.
+        ``TUXEMON_DETERMINISTIC_DRAW=1`` re-enables rendering (rendering does
+        not affect the simulation, only speed).
+        """
+        raw_max = os.environ.get("TUXEMON_MAX_STEPS", "").strip()
+        max_steps = int(raw_max) if raw_max.isdigit() and int(raw_max) else None
+        do_draw = os.environ.get("TUXEMON_DETERMINISTIC_DRAW", "") not in (
+            "",
+            "0",
+            "false",
+        )
+
+        logger.info(
+            "Deterministic main loop active "
+            f"(seed={determinism.seed()}, max_steps={max_steps})"
+        )
+
+        while self.state != ClientState.DONE:
+            if self.state == ClientState.RUNNING:
+                self.tick()
+                if do_draw:
+                    self.draw()
+                if max_steps is not None and self.step_count >= max_steps:
+                    self.quit()
+            elif self.state == ClientState.EXITING:
+                self.perform_cleanup()
+                self.state = ClientState.DONE
+
     def main(self) -> None:
         """
         Initiates the main game loop with a fixed timestep.
         """
+        if determinism.is_enabled():
+            self._deterministic_main()
+            return
+
         update = self.update
         draw = self.draw
         screen = self.screen

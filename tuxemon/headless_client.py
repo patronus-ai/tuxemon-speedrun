@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from tuxemon import determinism
 from tuxemon.base_client import BaseClient, ClientState
 
 if TYPE_CHECKING:
@@ -28,9 +29,27 @@ class HeadlessClient(BaseClient):
 
     def __init__(self, config: TuxemonConfig, context: DisplayContext) -> None:
         super().__init__(config, context)
+        self.step_count = 0
+
+    def tick(self, dt: float = 1.0 / 60.0) -> None:
+        """Advance the simulation by exactly one fixed step."""
+        self.update(dt)
+        determinism.advance(dt)
+        self.step_count += 1
 
     def main(self) -> None:
         FIXED_DT = 1.0 / 60.0
+
+        if determinism.is_enabled():
+            # one step per iteration; the wall clock never decides step count
+            while self.state != ClientState.DONE:
+                if self.state == ClientState.RUNNING:
+                    self.tick(FIXED_DT)
+                elif self.state == ClientState.EXITING:
+                    self.perform_cleanup()
+                    self.state = ClientState.DONE
+            return
+
         accumulator = 0.0
         last_time = time.time()
 
