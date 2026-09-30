@@ -108,6 +108,8 @@ class TuxemonEnv:
         max_steps: int = 200_000,
         wild: str = "fight",
         handoff_map: str = "spyder_bedroom.tmx",
+        intro_route: str | None = None,
+        handoff_step: int | None = None,
     ) -> None:
         global _ENV_CREATED
         if _ENV_CREATED:
@@ -128,6 +130,13 @@ class TuxemonEnv:
         self.max_steps = max_steps
         self.wild = wild
         self.handoff_map = handoff_map
+        # intro_route: None = scratch (menus only). A SCENARIOS key (e.g. "gymwalk") replays that
+        # route during reset so a seed tape cut at handoff_step lands in a matching state.
+        self.intro_route = intro_route
+        # handoff_step overrides the map-based handoff. Required with intro_route: once the Driver
+        # is navigating, "first clean frame in the bedroom" is ambiguous (the intro passes through
+        # the bedroom twice) and a step index is what the tape can actually be cut on.
+        self.handoff_step = handoff_step
 
         self.client = None
         self.drv = None
@@ -198,15 +207,29 @@ class TuxemonEnv:
     def reset(self, intro_cap: int = 20_000):
         """Boot, auto-play character creation, hand over at first player control."""
         self.client = P.make_client()
-        # Empty route: the Driver answers menus but issues no navigation of its own.
-        self.drv = P.Driver(self.client, [], wild=self.wild)
+        # ROUTE DRIVES THE HANDOFF, AND IT DECIDES WHETHER A SEED IS EVEN POSSIBLE.
+        #
+        # Empty route (scratch): the Driver only answers menus, so the env sits in the bedroom
+        # while the real probe -- which runs the FULL route -- has already walked on. At step 2291
+        # the probe is in spyder_paper_scoop [6,10] and the env is in spyder_bedroom [3,4]. There
+        # is then NO step at which the two share a state, so a tape cut from the probe is a list
+        # of inputs for the wrong position: the converted seed spent 63 directional actions and
+        # never left the bedroom.
+        #
+        # Passing the SAME route the probe used makes the two trajectories identical up to the
+        # handoff, which is what makes a seed valid. Scratch arms keep the empty route.
+        route = P.SCENARIOS[self.intro_route][0] if self.intro_route else []
+        self.drv = P.Driver(self.client, route, wild=self.wild)
         self.step_count = self.agent_steps = 0
         self.reached_target = False
         self.maps_seen = []
 
         for _ in range(intro_cap):
             self._tick(drive=True)
-            if self._world_ready():
+            if self.handoff_step is not None:
+                if self.step_count >= self.handoff_step:
+                    break
+            elif self._world_ready():
                 break
         else:
             raise RuntimeError(

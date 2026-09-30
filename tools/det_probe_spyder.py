@@ -761,6 +761,8 @@ def main() -> int:
     )
     ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--out", type=str, required=True)
+    ap.add_argument("--dump-tape", action="store_true",
+                    help="include the raw keypress tape in --out (needed to seed a TAS loop)")
     ap.add_argument(
         "--samples",
         action="store_true",
@@ -928,6 +930,12 @@ def main() -> int:
     payload: dict = {"summary": result}
     if args.samples:
         payload["samples"] = samples
+    # The raw keypress tape. Only its DIGEST and LENGTH were reported, which is enough to prove
+    # two runs matched but not enough to reuse the run: an optimisation loop needs the actual
+    # inputs to seed from, and re-deriving them from the route would mean re-implementing the
+    # driver's pathfinding. Each entry is (step, "down"|"up", pygame key code).
+    if args.dump_tape:
+        payload["tape"] = drv.tape
     Path(args.out).write_text(json.dumps(payload, sort_keys=True))
     terse = {k: v for k, v in result.items() if k != "events"}
     print("RESULT " + json.dumps(terse, sort_keys=True))

@@ -111,8 +111,17 @@ class DialogState(PopUpMenu[None]):
         logger.debug(f"DialogState.on_open: internal rect {internal_rect}")
         self.dialog_box.rect = internal_rect
 
-        self.dialog_box.image = Surface(internal_rect.size, SRCALPHA)
-        self.dialog_box.image = self.dialog_box._render_background()
+        # Do NOT blank the box if a line is already being typed into it. on_open runs as the
+        # completion callback of the menu's open animation (menu.show_items -> Animation.finish),
+        # but alert() can start the text animation several frames EARLIER. Resetting the surface
+        # here throws away the characters typed in between, and the per-character generator
+        # carries on from where it was -- so those characters are never redrawn. That is what
+        # turns "Do you want to skip the intro?" into "nt to skip the intro?" in the intro.
+        # _start_text_animation has already laid down the background, so the reset is redundant
+        # in that case anyway.
+        if not self.dialog_box.drawing_text:
+            self.dialog_box.image = Surface(internal_rect.size, SRCALPHA)
+            self.dialog_box.image = self.dialog_box._render_background()
 
         if self.avatar:
             avatar_rect = self.calc_final_rect()
